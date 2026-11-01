@@ -340,6 +340,18 @@ export default function RecordStep() {
             </div>
           </div>
 
+          {/* Recording tip */}
+          <div className="hint !my-0">
+            <svg className="w-4 h-4 flex-none mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 16v-4" />
+              <path d="M12 8h.01" />
+            </svg>
+            <div>
+              <strong className="text-[var(--ink)]">{t('recTipTitle')}:</strong> {t('recTipBody')}
+            </div>
+          </div>
+
           {/* Shortcuts Legend */}
           <div className="rounded-xl border border-[var(--line)] bg-[var(--soft)] p-3.5 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
             <span className="font-bold text-[var(--ink)]">{t('recShortcutsTitle')}</span>
