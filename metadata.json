@@ -1,0 +1,6 @@
+{
+  "name": "Wikisuara",
+  "description": "Perekam suara kata dan frasa berformat WAV (PCM 16-bit) langsung di browser tanpa login dan tanpa upload.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

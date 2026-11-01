@@ -1,0 +1,18 @@
+.review-item {
+  transition: all 0.15s ease;
+}
+
+.review-item:hover {
+  background: var(--soft);
+}
+
+.review-item.active {
+  background: color-mix(in srgb, var(--soft) 95%, var(--surface));
+  border-color: var(--brand);
+}
+
+.filename-cell {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  word-break: break-all;
+}

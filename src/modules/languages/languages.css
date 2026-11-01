@@ -1,0 +1,38 @@
+.lang-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.18s, background 0.18s, transform 0.18s, box-shadow 0.18s;
+  min-height: 120px;
+}
+
+.lang-tile:hover {
+  border-color: var(--brand-2);
+  background: var(--soft);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(45, 79, 156, 0.14);
+}
+
+.lang-tile:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.lang-tile.selected {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--soft) 80%, var(--surface));
+  box-shadow: 0 0 0 3px var(--ring), 0 8px 18px rgba(45, 79, 156, 0.16);
+}
+
+.babel-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: -0.02em;
+}

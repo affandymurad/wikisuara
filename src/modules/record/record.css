@@ -1,0 +1,17 @@
+.rec-btn-pulse {
+  animation: pulseGlow 1.4s infinite;
+}
+
+.rec-word-item {
+  transition: all 0.15s ease;
+}
+
+.rec-word-item.active {
+  background: color-mix(in srgb, var(--soft) 90%, var(--surface));
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.step-card, .card-body {
+  min-width: 0;
+}

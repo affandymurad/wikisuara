@@ -1,0 +1,65 @@
+.word-chip-container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 120px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--soft) 45%, var(--surface));
+  cursor: text;
+  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+}
+
+.word-chip-container:hover {
+  border-color: color-mix(in srgb, var(--brand-2) 55%, var(--line));
+}
+
+.word-chip-container:focus-within {
+  outline: none;
+  border-color: var(--brand-2);
+  background: var(--surface);
+  box-shadow: 0 0 0 4px var(--ring);
+}
+
+.word-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 12px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  color: #ffffff;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(45, 79, 156, 0.28);
+  animation: pop 0.18s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+.word-chip .chip-remove {
+  cursor: pointer;
+  font-weight: bold;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+
+.word-chip .chip-remove:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.word-chip-input {
+  flex: 1;
+  min-width: 180px;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: var(--ink) !important;
+  font-size: 14.5px !important;
+  padding: 6px 4px !important;
+}
