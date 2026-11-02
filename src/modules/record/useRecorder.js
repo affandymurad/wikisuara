@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { pcmSamplesToWavBlob } from '../../lib/wav.js';
 
-// Auto-stop tuning: stop after this long a pause once speech has been heard
-const SILENCE_MS = 1500;
+// Auto-stop tuning: default pause (ms) after speech before the recorder stops by itself
+export const DEFAULT_SILENCE_MS = 1000;
 const MIN_SPEECH_THRESHOLD = 0.004; // RMS floor (0..1), low so normal speech counts
 const MAX_SPEECH_THRESHOLD = 0.02; // cap so a noisy start never demands shouting
 const NOISE_CALIBRATION_MS = 300;
@@ -12,7 +12,14 @@ const STOP_FLUSH_MS = 250; // keep capturing briefly after stop so the last buff
 const TARGET_PEAK = 0.9;
 const MAX_GAIN = 60;
 
-export function useRecorder({ onSilence } = {}) {
+/**
+ * Microphone recorder producing 16-bit mono WAV.
+ * - onSilence: called once when a pause of `silenceMs` follows detected speech
+ * - silenceMs: pause length that triggers onSilence (read live, so changes apply immediately)
+ * - keepMicOpen: keep the microphone stream open between recordings (continuous mode),
+ *   so the next recording starts instantly; call releaseMic() when done
+ */
+export function useRecorder({ onSilence, silenceMs = DEFAULT_SILENCE_MS, keepMicOpen = false } = {}) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0); // in seconds
   const [audioLevel, setAudioLevel] = useState(0); // 0-100 for live visual feedback
@@ -28,15 +35,21 @@ export function useRecorder({ onSilence } = {}) {
   const timerRef = useRef(null);
   const animFrameRef = useRef(null);
   const sampleRateRef = useRef(44100);
+  const capturingRef = useRef(false);
+  const stoppingRef = useRef(false);
   const onSilenceRef = useRef(onSilence);
+  const silenceMsRef = useRef(silenceMs);
+  const keepMicOpenRef = useRef(keepMicOpen);
   const vadRef = useRef({});
 
   useEffect(() => {
     onSilenceRef.current = onSilence;
-  }, [onSilence]);
+    silenceMsRef.current = silenceMs;
+    keepMicOpenRef.current = keepMicOpen;
+  }, [onSilence, silenceMs, keepMicOpen]);
 
-  // Stop & clean up all hardware tracks and audio nodes
-  const cleanup = useCallback(() => {
+  // Stop the duration timer and the live meter loop
+  const stopTimers = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -45,40 +58,123 @@ export function useRecorder({ onSilence } = {}) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
     }
-    if (processorRef.current) {
-      try {
-        processorRef.current.disconnect();
-      } catch {}
-      processorRef.current = null;
-    }
-    if (analyserRef.current) {
-      try {
-        analyserRef.current.disconnect();
-      } catch {}
-      analyserRef.current = null;
-    }
-    if (sourceRef.current) {
-      try {
-        sourceRef.current.disconnect();
-      } catch {}
-      sourceRef.current = null;
-    }
+    setAudioLevel(0);
+  }, []);
+
+  // Release the microphone: stop all hardware tracks and audio nodes
+  const releaseMic = useCallback(() => {
+    stopTimers();
+    capturingRef.current = false;
+    [processorRef, analyserRef, sourceRef].forEach((ref) => {
+      if (ref.current) {
+        try {
+          ref.current.disconnect();
+        } catch {}
+        ref.current = null;
+      }
+    });
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
     }
-    setAudioLevel(0);
-  }, []);
+    audioContextRef.current = null;
+  }, [stopTimers]);
+
+  // Open the microphone pipeline unless it is already open and live
+  const ensureMic = useCallback(async () => {
+    const live =
+      streamRef.current &&
+      streamRef.current.getTracks().some((track) => track.readyState === 'live') &&
+      audioContextRef.current &&
+      audioContextRef.current.state !== 'closed';
+    if (live) {
+      if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
+      return;
+    }
+    releaseMic();
+
+    // 1. Acquire microphone stream
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        // AGC ramps up slowly on each new stream, making the start sound muffled.
+        // Loudness is normalized after recording instead.
+        autoGainControl: false,
+      },
+    });
+    streamRef.current = stream;
+
+    // 2. Initialize AudioContext
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContextClass();
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+    audioContextRef.current = audioCtx;
+    sampleRateRef.current = audioCtx.sampleRate || 44100;
+
+    // 3. Audio source + analyser for live volume feedback
+    const source = audioCtx.createMediaStreamSource(stream);
+    sourceRef.current = source;
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.5;
+    analyserRef.current = analyser;
+    source.connect(analyser);
+
+    // 4. ScriptProcessor for direct uncompressed Float32Array PCM recording.
+    // Small buffer keeps the end of the recording from being lost on stop.
+    const processor = audioCtx.createScriptProcessor(1024, 1, 1);
+    processorRef.current = processor;
+
+    processor.onaudioprocess = (e) => {
+      if (!capturingRef.current) return;
+      const inputChannel = e.inputBuffer.getChannelData(0);
+      pcmChunksRef.current.push(new Float32Array(inputChannel));
+
+      // Voice activity detection on this chunk
+      const vad = vadRef.current;
+      let sumSq = 0;
+      for (let i = 0; i < inputChannel.length; i++) sumSq += inputChannel[i] * inputChannel[i];
+      const rms = Math.sqrt(sumSq / inputChannel.length);
+      const now = Date.now();
+      const elapsed = now - startTimeRef.current;
+
+      if (elapsed < NOISE_CALIBRATION_MS) {
+        // Quietest chunk = noise floor, so speaking right after pressing record doesn't raise it
+        vad.noise = vad.noiseMs === 0 ? rms : Math.min(vad.noise, rms);
+        vad.noiseMs++;
+        vad.threshold = Math.min(MAX_SPEECH_THRESHOLD, Math.max(MIN_SPEECH_THRESHOLD, vad.noise * 2.5));
+        return;
+      }
+      if (rms > vad.threshold) {
+        vad.heard = true;
+        vad.lastVoice = now;
+      } else if (vad.heard && !vad.fired && now - vad.lastVoice > silenceMsRef.current) {
+        vad.fired = true;
+        onSilenceRef.current?.();
+      }
+    };
+
+    source.connect(processor);
+    // Connect to destination via silent gain to keep audio clock running in Chrome/Safari
+    const muteGain = audioCtx.createGain();
+    muteGain.gain.value = 0;
+    processor.connect(muteGain);
+    muteGain.connect(audioCtx.destination);
+  }, [releaseMic]);
 
   const startRecording = useCallback(async () => {
     setError(null);
-    cleanup();
+    stopTimers();
     pcmChunksRef.current = [];
     vadRef.current = { threshold: MIN_SPEECH_THRESHOLD, noise: 0, noiseMs: 0, heard: false, lastVoice: 0, fired: false };
+    stoppingRef.current = false;
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setError('Browser ini tidak mendukung akses mikrofon getUserMedia.');
@@ -86,41 +182,10 @@ export function useRecorder({ onSilence } = {}) {
     }
 
     try {
-      // 1. Acquire microphone stream
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: false,
-          // AGC ramps up slowly on each new stream, making the start sound muffled.
-          // Loudness is normalized after recording instead.
-          autoGainControl: false,
-        },
-      });
-      streamRef.current = stream;
-
-      // 2. Initialize AudioContext
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioContextClass();
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
-      audioContextRef.current = audioCtx;
-      sampleRateRef.current = audioCtx.sampleRate || 44100;
-
-      // 3. Audio Source
-      const source = audioCtx.createMediaStreamSource(stream);
-      sourceRef.current = source;
-
-      // 4. Analyser node for live volume feedback
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.5;
-      analyserRef.current = analyser;
-      source.connect(analyser);
+      await ensureMic();
 
       // Live volume meter loop
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
       const updateVolume = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteFrequencyData(dataArray);
@@ -134,49 +199,8 @@ export function useRecorder({ onSilence } = {}) {
       };
       updateVolume();
 
-      // 5. ScriptProcessor for direct uncompressed Float32Array PCM recording
-      // Small buffer keeps the end of the recording from being lost on stop
-      const bufferSize = 1024;
-      const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-      processorRef.current = processor;
-
-      processor.onaudioprocess = (e) => {
-        const inputChannel = e.inputBuffer.getChannelData(0);
-        // Clone samples into memory
-        pcmChunksRef.current.push(new Float32Array(inputChannel));
-
-        // Voice activity detection on this chunk
-        const vad = vadRef.current;
-        let sumSq = 0;
-        for (let i = 0; i < inputChannel.length; i++) sumSq += inputChannel[i] * inputChannel[i];
-        const rms = Math.sqrt(sumSq / inputChannel.length);
-        const now = Date.now();
-        const elapsed = now - startTimeRef.current;
-
-        if (elapsed < NOISE_CALIBRATION_MS) {
-          // Quietest chunk = noise floor, so speaking right after pressing record doesn't raise it
-          vad.noise = vad.noiseMs === 0 ? rms : Math.min(vad.noise, rms);
-          vad.noiseMs++;
-          vad.threshold = Math.min(MAX_SPEECH_THRESHOLD, Math.max(MIN_SPEECH_THRESHOLD, vad.noise * 2.5));
-          return;
-        }
-        if (rms > vad.threshold) {
-          vad.heard = true;
-          vad.lastVoice = now;
-        } else if (vad.heard && !vad.fired && now - vad.lastVoice > SILENCE_MS) {
-          vad.fired = true;
-          onSilenceRef.current?.();
-        }
-      };
-
-      source.connect(processor);
-      // Connect to destination via silent gain to keep audio clock running in Chrome/Safari
-      const muteGain = audioCtx.createGain();
-      muteGain.gain.value = 0;
-      processor.connect(muteGain);
-      muteGain.connect(audioCtx.destination);
-
       startTimeRef.current = Date.now();
+      capturingRef.current = true;
       setIsRecording(true);
       setRecordingDuration(0);
 
@@ -187,7 +211,7 @@ export function useRecorder({ onSilence } = {}) {
       return true;
     } catch (err) {
       console.error('Failed to start recording:', err);
-      cleanup();
+      releaseMic();
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setError('Izin akses mikrofon ditolak oleh browser.');
       } else if (err.name === 'NotFoundError') {
@@ -197,25 +221,26 @@ export function useRecorder({ onSilence } = {}) {
       }
       return false;
     }
-  }, [cleanup]);
+  }, [ensureMic, releaseMic, stopTimers]);
 
   const stopRecording = useCallback(() => {
     return new Promise((resolve) => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+      if (!capturingRef.current || stoppingRef.current) {
+        resolve(null);
+        return;
       }
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
-        animFrameRef.current = null;
-      }
-
+      stoppingRef.current = true;
+      vadRef.current.fired = true; // no more auto-stop callbacks while finishing
+      stopTimers();
       setIsRecording(false);
 
-      // Short delay to ensure the last audio buffers are captured
+      // Keep capturing briefly so the last audio buffers are delivered
       setTimeout(() => {
+        capturingRef.current = false;
+        stoppingRef.current = false;
         const chunks = pcmChunksRef.current;
         const sampleRate = sampleRateRef.current || 44100;
+        const noiseFloor = vadRef.current.noise || 0;
 
         // Calculate total samples
         let totalSamples = 0;
@@ -224,7 +249,7 @@ export function useRecorder({ onSilence } = {}) {
         }
 
         if (totalSamples === 0) {
-          cleanup();
+          if (!keepMicOpenRef.current) releaseMic();
           resolve(null);
           return;
         }
@@ -267,6 +292,7 @@ export function useRecorder({ onSilence } = {}) {
           const a = Math.abs(samples[i]);
           if (a > peak) peak = a;
         }
+        const rawPeak = peak; // before normalization, to judge how loud the input really was
         if (first >= 0 && peak > 0.001 && peak < TARGET_PEAK) {
           const gain = Math.min(TARGET_PEAK / peak, MAX_GAIN);
           for (let i = 0; i < samples.length; i++) samples[i] *= gain;
@@ -277,7 +303,7 @@ export function useRecorder({ onSilence } = {}) {
         // Encode directly to authentic PCM 16-bit mono WAV!
         const wavBlob = pcmSamplesToWavBlob(samples, sampleRate);
 
-        cleanup();
+        if (!keepMicOpenRef.current) releaseMic();
 
         resolve({
           blob: wavBlob,
@@ -285,16 +311,19 @@ export function useRecorder({ onSilence } = {}) {
           duration,
           sampleRate,
           size: wavBlob.size,
+          hasVoice: first >= 0,
+          rawPeak,
+          noiseFloor,
         });
       }, STOP_FLUSH_MS);
     });
-  }, [cleanup]);
+  }, [releaseMic, stopTimers]);
 
   useEffect(() => {
     return () => {
-      cleanup();
+      releaseMic();
     };
-  }, [cleanup]);
+  }, [releaseMic]);
 
   return {
     isRecording,
@@ -302,6 +331,7 @@ export function useRecorder({ onSilence } = {}) {
     audioLevel,
     startRecording,
     stopRecording,
+    releaseMic,
     error,
   };
 }

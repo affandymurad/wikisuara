@@ -9,9 +9,17 @@ export function hasNonLatin(text) {
   return NON_LATIN_REGEX.test(text || '');
 }
 
-/** True when the text is non-Latin and the romanization is still missing. */
+/** Why the romanization is not acceptable: 'required' (empty) | 'notLatin' (has non-Latin letters) | null (ok or not needed). */
+export function romanizationIssue(text, romanization) {
+  if (!hasNonLatin(text)) return null;
+  const roman = (romanization || '').trim();
+  if (!roman) return 'required';
+  return hasNonLatin(roman) ? 'notLatin' : null;
+}
+
+/** True when the text is non-Latin and its romanization is missing or not written in Latin letters. */
 export function needsRomanization(text, romanization) {
-  return hasNonLatin(text) && !(romanization || '').trim();
+  return romanizationIssue(text, romanization) !== null;
 }
 
 /** "Иван (Ivan)" for non-Latin text with a romanization, otherwise the text as-is. */

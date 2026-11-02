@@ -2,7 +2,7 @@ import { useState } from 'react';
 import Card from '../../components/Card.jsx';
 import { useApp } from '../../state/AppContext.jsx';
 import { useT } from '../../lib/i18n.js';
-import { hasNonLatin, needsRomanization, withRomanization } from '../../lib/script.js';
+import { hasNonLatin, needsRomanization, romanizationIssue, withRomanization } from '../../lib/script.js';
 import './profile.css';
 
 export default function ProfileStep() {
@@ -18,6 +18,7 @@ export default function ProfileStep() {
   } = useApp();
   const { t } = useT();
 
+  const activeRomanIssue = romanizationIssue(activeProfile?.name, activeProfile?.romanization);
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileRoman, setNewProfileRoman] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -28,8 +29,9 @@ export default function ProfileStep() {
       showToast(t('profileNameRequired'), 'warn');
       return;
     }
-    if (needsRomanization(newProfileName, newProfileRoman)) {
-      showToast(t('profileRomanRequired'), 'warn');
+    const issue = romanizationIssue(newProfileName, newProfileRoman);
+    if (issue) {
+      showToast(issue === 'notLatin' ? t('romanNotLatin') : t('profileRomanRequired'), 'warn');
       return;
     }
     const created = addProfile(newProfileName.trim(), newProfileRoman.trim());
@@ -85,7 +87,11 @@ export default function ProfileStep() {
                 placeholder={t('profileRomanPlaceholder')}
                 className="w-full font-semibold text-base"
                 aria-required="true"
+                aria-invalid={activeRomanIssue === 'notLatin'}
               />
+              {activeRomanIssue === 'notLatin' && (
+                <div role="alert" className="mt-1.5 text-xs font-semibold text-[var(--danger)]">{t('romanNotLatin')}</div>
+              )}
             </div>
           )}
         </div>
@@ -124,7 +130,11 @@ export default function ProfileStep() {
                   placeholder={`${t('profileRomanLabel')} — ${t('profileRomanPlaceholder')}`}
                   className="basis-full text-sm"
                   aria-required="true"
+                  aria-invalid={romanizationIssue(newProfileName, newProfileRoman) === 'notLatin'}
                 />
+              )}
+              {romanizationIssue(newProfileName, newProfileRoman) === 'notLatin' && (
+                <div role="alert" className="basis-full text-xs font-semibold text-[var(--danger)]">{t('romanNotLatin')}</div>
               )}
               <button type="submit" className="btn-primary text-xs py-2 px-4">
                 Simpan

@@ -7,9 +7,9 @@ Wikisuara (WS) adalah aplikasi web berbasis React JS (Vite) untuk merekam pelafa
 - **Alur 6 Langkah Terarah:**
   1. **Profil:** Manajemen profil penutur (mendukung beberapa profil). Nama beraksara non-Latin wajib disertai latinisasi.
   2. **Bahasa:** Pengelolaan bahasa yang dikuasai per profil penutur (awalnya kosong) beserta QID Wikidata dan kode bahasa ISO, dengan pemilih bahasa aktif berbentuk kartu.
-  3. **Cek Perangkat:** Pengujian izin mikrofon, indikator level audio dB realtime, dan visualizer gelombang audio (canvas).
+  3. **Cek Perangkat:** Pengujian izin mikrofon, indikator level audio realtime, visualizer gelombang, serta rekam tes 5 detik yang bisa diputar ulang beserta penilaian suara dan kebisingan latar.
   4. **Daftar Kata:** Tambah kata atau frasa satu per satu lewat formulir (Enter untuk menambah); chip hanya untuk melihat dan menghapus. Jika kata beraksara non-Latin, kolom latinisasi muncul dan wajib diisi. Otomatis deduping.
-  5. **Rekam:** Antarmuka perekam layar ganda dengan daftar kata, kata besar, progres, tombol Mulai/Berhenti, dan pintasan keyboard (Spasi = rekam/berhenti, Panah Kanan = kata berikutnya).
+  5. **Rekam:** Antarmuka perekam layar ganda dengan daftar kata, kata besar, progres, tombol Mulai/Berhenti, dan pintasan keyboard (Spasi = rekam/berhenti, Panah Kanan = kata berikutnya). Berhenti otomatis saat hening (lama hening 0,5-1,5 detik dapat diatur) dan pilihan lanjut manual atau lanjut otomatis ke kata berikutnya.
   6. **Tinjau & Unggah:** Pemutar audio, centang rekaman, dan tabel berkas WAV yang siap diunduh satuan, diunduh seluruhnya dalam ZIP (JSZip), dan unduh daftar berkas sebagai PDF.
 
 ## Format Nama Berkas

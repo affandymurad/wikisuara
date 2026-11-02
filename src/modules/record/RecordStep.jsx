@@ -3,16 +3,32 @@ import Card from '../../components/Card.jsx';
 import { useApp } from '../../state/AppContext.jsx';
 import { useT } from '../../lib/i18n.js';
 import { useRecorder } from './useRecorder.js';
+import { useRecordSettings } from '../../lib/recordSettings.js';
+import RecordSettings from './RecordSettings.jsx';
 import { useRecordShortcuts } from './recordShortcuts.js';
 import './record.css';
 
+// Time to read the next word before hands-free recording starts again
+const ADVANCE_DELAY_MS = 900;
+
 export default function RecordStep() {
   const { words, recordings, saveRecording, deleteRecording, showToast, setStep } = useApp();
-  const { t } = useT();
+  const { t, lang } = useT();
+  const currentLangTag = lang === 'id' ? 'id-ID' : 'en-US';
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [playingWordId, setPlayingWordId] = useState(null);
   const audioPlayerRef = useRef(null);
+
+  const { silenceMs, autoAdvance, setSilenceMs, setAutoAdvance } = useRecordSettings();
+
+  // Hands-free session: after each word is saved, move on and record again (autoAdvance mode)
+  const [autoActive, setAutoActive] = useState(false);
+  const autoActiveRef = useRef(false);
+  const advanceTimerRef = useRef(null);
+  const indexRef = useRef(0);
+  const wordsRef = useRef(words);
+  const recordingsRef = useRef(recordings);
 
   const finishRef = useRef(null);
   const {
@@ -21,77 +37,173 @@ export default function RecordStep() {
     audioLevel,
     startRecording,
     stopRecording,
+    releaseMic,
     error: recError,
-  } = useRecorder({ onSilence: () => finishRef.current?.(true) });
+  } = useRecorder({
+    onSilence: () => finishRef.current?.(true),
+    silenceMs,
+    keepMicOpen: autoActive, // continuous mode keeps the mic open so the next word starts instantly
+  });
 
   const currentWord = words[currentIndex] || null;
   const currentRecording = currentWord ? recordings[currentWord.id] : null;
 
+  useEffect(() => {
+    indexRef.current = currentIndex;
+    wordsRef.current = words;
+    recordingsRef.current = recordings;
+  }, [currentIndex, words, recordings]);
+
   const recordedCount = words.filter((w) => Boolean(recordings[w.id])).length;
   const totalCount = words.length;
 
-  // Stop, save and mark the word as recorded. Never moves to another word.
+  // End the hands-free session and let go of the microphone
+  const endAuto = useCallback(() => {
+    autoActiveRef.current = false;
+    setAutoActive(false);
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, []);
+
+  // Pause between words, then move to the next word without a recording and record it
+  const scheduleNext = useCallback(() => {
+    const list = wordsRef.current;
+    let next = -1;
+    for (let i = indexRef.current + 1; i < list.length; i++) {
+      if (!recordingsRef.current[list[i].id]) {
+        next = i;
+        break;
+      }
+    }
+    if (next === -1) {
+      endAuto();
+      releaseMic();
+      showToast(t('recAutoDone'), 'success');
+      return;
+    }
+    advanceTimerRef.current = setTimeout(() => {
+      if (!autoActiveRef.current) return;
+      setCurrentIndex(next);
+      // Wait a tick so the new word is rendered before recording starts
+      advanceTimerRef.current = setTimeout(async () => {
+        if (!autoActiveRef.current) return;
+        const ok = await startRecording();
+        if (!ok) {
+          endAuto();
+          releaseMic();
+          showToast('Gagal mengaktifkan mikrofon. Periksa izin mikrofon Anda.', 'error');
+        }
+      }, 150);
+    }, ADVANCE_DELAY_MS);
+  }, [endAuto, releaseMic, showToast, startRecording, t]);
+
+  // Stop, save and mark the word as recorded. Moves on only in hands-free mode.
   const isFinishingRef = useRef(false);
   const finishRecording = useCallback(async (auto = false) => {
     if (!currentWord || isFinishingRef.current) return;
     isFinishingRef.current = true;
+    let saveOk = false;
     try {
       const result = await stopRecording();
-      if (!result || !result.blob) return;
-      const saved = await saveRecording(currentWord.id, result.blob, result.duration);
-      if (!saved.success) {
-        if (saved.error === 'too_short') {
-          showToast(t('recTooShortWarning'), 'warn');
+      if (result && result.blob) {
+        const saved = await saveRecording(currentWord.id, result.blob, result.duration);
+        if (!saved.success) {
+          if (saved.error === 'too_short') {
+            showToast(t('recTooShortWarning'), 'warn');
+          } else {
+            showToast('Gagal memproses audio WAV: ' + saved.error, 'error');
+          }
         } else {
-          showToast('Gagal memproses audio WAV: ' + saved.error, 'error');
+          saveOk = true;
+          showToast(
+            `Rekaman "${currentWord.text}" tersimpan${auto ? ' otomatis' : ''} (${saved.duration.toFixed(1)}s)`,
+            'success'
+          );
         }
-      } else {
-        showToast(
-          `Rekaman "${currentWord.text}" tersimpan${auto ? ' otomatis' : ''} (${saved.duration.toFixed(1)}s)`,
-          'success'
-        );
       }
     } finally {
       isFinishingRef.current = false;
     }
-  }, [currentWord, stopRecording, saveRecording, showToast, t]);
+
+    if (autoActiveRef.current) {
+      if (saveOk && auto) {
+        scheduleNext();
+      } else {
+        endAuto();
+        releaseMic();
+        if (!saveOk) showToast(t('recAutoStopped'), 'warn');
+      }
+    }
+  }, [currentWord, stopRecording, saveRecording, showToast, t, scheduleNext, endAuto, releaseMic]);
 
   useEffect(() => {
     finishRef.current = finishRecording;
   }, [finishRecording]);
 
-  // Toggle record logic
+  // Toggle record logic (manual: record/stop; hands-free: start/pause the session)
   const handleToggleRecord = useCallback(async () => {
     if (!currentWord) return;
 
+    if (autoAdvance && (autoActiveRef.current || isRecording)) {
+      // Pause: save what was recorded (if any) and stay on this word
+      const wasRecording = isRecording;
+      endAuto();
+      if (wasRecording) await finishRecording(false);
+      releaseMic();
+      return;
+    }
+
     if (isRecording) {
       await finishRecording(false);
-    } else {
-      // Stop any playback first
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.pause();
-        setPlayingWordId(null);
-      }
-      const ok = await startRecording();
-      if (!ok) {
-        showToast('Gagal mengaktifkan mikrofon. Periksa izin mikrofon Anda.', 'error');
-      }
+      return;
     }
-  }, [currentWord, isRecording, finishRecording, startRecording, showToast]);
+
+    // Stop any playback first
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      setPlayingWordId(null);
+    }
+    if (autoAdvance) {
+      autoActiveRef.current = true;
+      setAutoActive(true);
+    }
+    const ok = await startRecording();
+    if (!ok) {
+      endAuto();
+      showToast('Gagal mengaktifkan mikrofon. Periksa izin mikrofon Anda.', 'error');
+    }
+  }, [currentWord, autoAdvance, isRecording, finishRecording, startRecording, endAuto, releaseMic, showToast]);
+
+  // Turning hands-free mode off (or leaving the step) ends any running session
+  useEffect(() => {
+    if (!autoAdvance && autoActiveRef.current) {
+      endAuto();
+      releaseMic();
+    }
+  }, [autoAdvance, endAuto, releaseMic]);
+
+  useEffect(() => {
+    return () => {
+      autoActiveRef.current = false;
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    };
+  }, []);
 
   const handleNextWord = useCallback(() => {
-    if (isRecording) return;
+    if (isRecording || autoActive) return;
     if (currentIndex < words.length - 1) {
       setCurrentIndex((prev) => prev + 1);
     }
-  }, [currentIndex, words.length, isRecording]);
+  }, [currentIndex, words.length, isRecording, autoActive]);
 
   const handlePrevWord = useCallback(() => {
-    if (isRecording) return;
+    if (isRecording || autoActive) return;
     if (currentIndex > 0) {
       setCurrentIndex((prev) => prev - 1);
     }
-  }, [currentIndex, isRecording]);
+  }, [currentIndex, isRecording, autoActive]);
 
   // Hook shortcuts: Space to record/stop, Arrows for navigation
   useRecordShortcuts({
@@ -173,7 +285,7 @@ export default function RecordStep() {
                 <div
                   key={w.id}
                   onClick={() => {
-                    if (!isRecording) setCurrentIndex(idx);
+                    if (!isRecording && !autoActive) setCurrentIndex(idx);
                   }}
                   className={`rec-word-item flex items-center justify-between gap-2 p-2.5 rounded-xl border text-sm cursor-pointer ${
                     isSelected
@@ -249,7 +361,7 @@ export default function RecordStep() {
                     : 'bg-[var(--soft)] text-[var(--muted)]'
                 }`}
               >
-                {isRecording ? '● SEDANG MEREKAM...' : currentRecording ? t('recStatusRecorded') : t('recStatusUnrecorded')}
+                {isRecording ? '● SEDANG MEREKAM...' : autoActive ? t('recAutoNext') : currentRecording ? t('recStatusRecorded') : t('recStatusUnrecorded')}
               </span>
             </div>
 
@@ -295,17 +407,27 @@ export default function RecordStep() {
                 type="button"
                 onClick={handleToggleRecord}
                 className={`px-8 py-4 rounded-2xl font-bold text-base flex items-center gap-3 transition-all cursor-pointer shadow-lg ${
-                  isRecording
+                  isRecording || autoActive
                     ? 'bg-[var(--danger)] text-white rec-btn-pulse shadow-[rgba(220,53,69,0.35)]'
                     : 'btn-primary'
                 }`}
               >
                 <span
                   className={`h-4 w-4 rounded-full ${
-                    isRecording ? 'bg-white' : 'bg-red-400'
+                    isRecording || autoActive ? 'bg-white' : 'bg-red-400'
                   }`}
                 />
-                <span>{isRecording ? t('recStopBtn') : currentRecording ? t('recReRecordBtn') : t('recStartBtn')}</span>
+                <span>
+                  {autoActive
+                    ? t('recAutoPauseBtn')
+                    : isRecording
+                    ? t('recStopBtn')
+                    : autoAdvance
+                    ? t('recAutoStartBtn')
+                    : currentRecording
+                    ? t('recReRecordBtn')
+                    : t('recStartBtn')}
+                </span>
                 {isRecording && (
                   <span className="font-mono font-bold text-xs bg-black/20 px-2 py-0.5 rounded-md">
                     {recordingDuration.toFixed(1)}s
@@ -318,7 +440,7 @@ export default function RecordStep() {
                 <button
                   type="button"
                   onClick={handlePrevWord}
-                  disabled={currentIndex === 0 || isRecording}
+                  disabled={currentIndex === 0 || isRecording || autoActive}
                   className="icon-btn text-xs py-2 px-3"
                 >
                   ← {t('recPrevWordBtn')}
@@ -337,7 +459,7 @@ export default function RecordStep() {
                 <button
                   type="button"
                   onClick={handleNextWord}
-                  disabled={currentIndex >= words.length - 1 || isRecording}
+                  disabled={currentIndex >= words.length - 1 || isRecording || autoActive}
                   className="icon-btn text-xs py-2 px-3"
                 >
                   {t('recNextWordBtn')} →
@@ -345,6 +467,15 @@ export default function RecordStep() {
               </div>
             </div>
           </div>
+
+          {/* Recording settings */}
+          <RecordSettings
+            silenceMs={silenceMs}
+            autoAdvance={autoAdvance}
+            onSilenceChange={setSilenceMs}
+            onAutoAdvanceChange={setAutoAdvance}
+            modeLocked={isRecording || autoActive}
+          />
 
           {/* Recording tip */}
           <div className="hint !my-0">
@@ -354,7 +485,7 @@ export default function RecordStep() {
               <path d="M12 8h.01" />
             </svg>
             <div>
-              <strong className="text-[var(--ink)]">{t('recTipTitle')}:</strong> {t('recTipBody')}
+              <strong className="text-[var(--ink)]">{t('recTipTitle')}:</strong> {t('recTipBody', { sec: (silenceMs / 1000).toLocaleString(currentLangTag, { minimumFractionDigits: 1 }) })}
             </div>
           </div>
 

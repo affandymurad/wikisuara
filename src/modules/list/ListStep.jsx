@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import Card from '../../components/Card.jsx';
 import { useApp } from '../../state/AppContext.jsx';
 import { useT } from '../../lib/i18n.js';
-import { hasNonLatin, needsRomanization } from '../../lib/script.js';
+import { hasNonLatin, romanizationIssue } from '../../lib/script.js';
 import './list.css';
 
 export default function ListStep() {
@@ -15,13 +15,15 @@ export default function ListStep() {
   const wordRef = useRef(null);
 
   const isNonLatin = hasNonLatin(wordInput);
+  const romanIssue = romanizationIssue(wordInput, romanInput);
 
   // Add exactly one word/phrase from the form; the Latin reading is required for non-Latin scripts
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!wordInput.trim()) return;
-    if (needsRomanization(wordInput, romanInput)) {
-      showToast(t('listRomanRequired'), 'warn');
+    const issue = romanizationIssue(wordInput, romanInput);
+    if (issue) {
+      showToast(issue === 'notLatin' ? t('romanNotLatin') : t('listRomanRequired'), 'warn');
       return;
     }
     const result = addWord(wordInput, isNonLatin ? romanInput : '');
@@ -137,8 +139,12 @@ export default function ListStep() {
                 placeholder={t('listRomanPlaceholder')}
                 className="w-full text-base font-semibold"
                 aria-required="true"
+                aria-invalid={romanIssue === 'notLatin'}
                 autoComplete="off"
               />
+              {romanIssue === 'notLatin' && (
+                <div role="alert" className="mt-1.5 text-xs font-semibold text-[var(--danger)]">{t('romanNotLatin')}</div>
+              )}
             </div>
           )}
 
