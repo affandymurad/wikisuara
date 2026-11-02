@@ -2,73 +2,37 @@ import { useState, useRef } from 'react';
 import Card from '../../components/Card.jsx';
 import { useApp } from '../../state/AppContext.jsx';
 import { useT } from '../../lib/i18n.js';
-import { readTextFile } from './listService.js';
+import { hasNonLatin, needsRomanization } from '../../lib/script.js';
 import './list.css';
 
 export default function ListStep() {
-  const { words, addWordsRaw, removeWord, clearWords, showToast } = useApp();
+  const { words, addWord, removeWord, clearWords, showToast } = useApp();
   const { t } = useT();
 
-  const [currentInput, setCurrentInput] = useState('');
+  const [wordInput, setWordInput] = useState('');
+  const [romanInput, setRomanInput] = useState('');
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
-  const inputRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const wordRef = useRef(null);
 
-  // Commit text into chips
-  const commitCurrentText = (textToCommit) => {
-    const raw = textToCommit || currentInput;
-    if (!raw.trim()) return;
-    const added = addWordsRaw(raw);
-    setCurrentInput('');
-    if (added > 0) {
-      showToast(`${added} kata ditambahkan!`, 'success');
-    }
-  };
+  const isNonLatin = hasNonLatin(wordInput);
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault();
-      commitCurrentText();
-    } else if (e.key === 'Backspace' && !currentInput && words.length > 0) {
-      // Remove last word on backspace if input is empty
-      removeWord(words[words.length - 1].id);
+  // Add exactly one word/phrase from the form; the Latin reading is required for non-Latin scripts
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!wordInput.trim()) return;
+    if (needsRomanization(wordInput, romanInput)) {
+      showToast(t('listRomanRequired'), 'warn');
+      return;
     }
-  };
-
-  const handlePaste = (e) => {
-    const text = e.clipboardData.getData('text');
-    if (text && (text.includes('\n') || text.includes(',') || text.includes('#'))) {
-      e.preventDefault();
-      const added = addWordsRaw(text);
-      if (added > 0) {
-        showToast(`${added} kata diimpor dari tempelan teks!`, 'success');
-      }
-      setCurrentInput('');
+    const result = addWord(wordInput, isNonLatin ? romanInput : '');
+    if (result === 'duplicate') {
+      showToast(t('listWordDuplicate'), 'warn');
+      return;
     }
-  };
-
-  const handleBlur = () => {
-    if (currentInput.trim()) {
-      commitCurrentText();
-    }
-  };
-
-  const handleFileChange = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const parsedItems = await readTextFile(file);
-      if (parsedItems.length === 0) {
-        showToast('Berkas tidak berisi kata yang valid.', 'warn');
-        return;
-      }
-      const added = addWordsRaw(parsedItems.join('\n'));
-      showToast(`${added} kata berhasil diimpor dari ${file.name}!`, 'success');
-    } catch {
-      showToast('Gagal membaca berkas .txt', 'error');
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
+    showToast(t('listWordAdded', { word: wordInput.trim() }), 'success');
+    setWordInput('');
+    setRomanInput('');
+    wordRef.current?.focus();
   };
 
   const handleClearAll = () => {
@@ -81,12 +45,12 @@ export default function ListStep() {
     <Card
       eyebrow={t('listEyebrow')}
       title={t('listTitle')}
-      lead="Masukkan kata atau frasa yang ingin direkam (pisahkan dengan baris baru atau koma). Setiap kata akan otomatis menjadi chip yang dapat dihapus."
+      lead={t('listLead')}
       stepNumber={4}
       nextDisabled={words.length === 0}
     >
       <div className="space-y-4">
-        {/* Top Control Bar: Total count, Clear all, and Import txt */}
+        {/* Top Control Bar: Total count and Clear all */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-[var(--line)]">
           <div className="flex items-center gap-2.5">
             <span className="text-sm font-bold text-[var(--ink)]">
@@ -98,27 +62,6 @@ export default function ListStep() {
           </div>
 
           <div className="flex items-center gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".txt,text/plain"
-              onChange={handleFileChange}
-              className="hidden"
-              id="txtFileInput"
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="icon-btn text-xs py-1.5 px-3"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              <span>{t('listImportTxtBtn')}</span>
-            </button>
-
             {words.length > 0 && (
               <div>
                 {isConfirmingClear ? (
@@ -153,58 +96,82 @@ export default function ListStep() {
           </div>
         </div>
 
-        {/* Chip Input Container */}
-        <div
-          className="word-chip-container"
-          onClick={() => inputRef.current?.focus()}
+        {/* New word form */}
+        <form
+          onSubmit={handleSubmit}
+          className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-4 sm:p-5 space-y-3"
         >
-          {/* Removable chips */}
+          <div>
+            <label htmlFor="wordInput" className="block text-sm font-bold text-[var(--ink)] mb-1.5">
+              {t('listWordLabel')}
+            </label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                id="wordInput"
+                ref={wordRef}
+                type="text"
+                value={wordInput}
+                onChange={(e) => setWordInput(e.target.value)}
+                placeholder={t('listWordPlaceholder')}
+                className="flex-1 text-base font-semibold"
+                autoComplete="off"
+              />
+              <button type="submit" className="btn-primary text-sm py-2.5 px-5 cursor-pointer">
+                + {t('listAddWordBtn')}
+              </button>
+            </div>
+          </div>
+
+          {/* Romanization: only shown (and required) when the word has non-Latin letters */}
+          {isNonLatin && (
+            <div>
+              <label htmlFor="romanInput" className="block text-sm font-bold text-[var(--ink)] mb-1">
+                {t('listRomanLabel')}
+              </label>
+              <div className="text-xs text-[var(--muted)] mb-2">{t('listRomanHint')}</div>
+              <input
+                id="romanInput"
+                type="text"
+                value={romanInput}
+                onChange={(e) => setRomanInput(e.target.value)}
+                placeholder={t('listRomanPlaceholder')}
+                className="w-full text-base font-semibold"
+                aria-required="true"
+                autoComplete="off"
+              />
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
+            <span>{t('listFormHint')}</span>
+            <span>{t('listDuplicateIgnored')}</span>
+          </div>
+        </form>
+
+        {/* Chips: show and remove only */}
+        <div className="word-chip-container">
+          {words.length === 0 && (
+            <span className="text-sm text-[var(--muted)] px-1 py-0.5">{t('listEmptyState')}</span>
+          )}
           {words.map((item) => (
             <span key={item.id} className="word-chip">
-              <span>{item.text}</span>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeWord(item.id);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.stopPropagation();
-                    removeWord(item.id);
-                  }
-                }}
+              <span>
+                {item.text}
+                {item.romanization && (
+                  <span className="opacity-80 font-medium"> ({item.romanization})</span>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeWord(item.id)}
                 className="chip-remove"
                 title={t('listDeleteItem')}
                 aria-label={`Hapus ${item.text}`}
               >
                 ×
-              </span>
+              </button>
             </span>
           ))}
-
-          {/* Inline input */}
-          <input
-            ref={inputRef}
-            type="text"
-            value={currentInput}
-            onChange={(e) => setCurrentInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onBlur={handleBlur}
-            placeholder={
-              words.length === 0
-                ? 'Ketik kata lalu tekan Enter atau koma (mis. bayem, alay, rumah)...'
-                : 'Tambah kata lagi (Enter / koma)...'
-            }
-            className="word-chip-input"
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between text-xs text-[var(--muted)] pt-1">
-          <span>Tekan <strong>Enter</strong> atau <strong>koma (,)</strong> untuk membuat chip baru. Tempel teks banyak baris didukung langsung.</span>
-          <span>{t('listDuplicateIgnored')}</span>
         </div>
       </div>
     </Card>

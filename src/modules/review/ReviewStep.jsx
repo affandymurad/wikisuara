@@ -275,6 +275,7 @@ export default function ReviewStep() {
                         />
                         <span className="font-semibold text-[var(--ink)] truncate">
                           {w.text}
+                          {w.romanization && <span className="font-medium text-[var(--muted)]"> ({w.romanization})</span>}
                         </span>
                       </div>
 

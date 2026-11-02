@@ -4,8 +4,6 @@
  * - IndexedDB: audio recording Blobs (PCM/WAV)
  */
 
-import { DEFAULT_LANGUAGES } from '../lib/languages.js';
-
 const STORAGE_KEYS = {
   PROFILES: 'ws_profiles',
   ACTIVE_PROFILE_ID: 'ws_active_profile_id',
@@ -17,10 +15,11 @@ const STORAGE_KEYS = {
 
 // Default initial state
 export const DEFAULT_PROFILES = [
-  { id: 'prof_default', name: '', isDefault: true },
+  { id: 'prof_default', name: '', romanization: '', isDefault: true },
 ];
 
 export const DEFAULT_WORDS = [];
+export const DEFAULT_LANGUAGES = [];
 
 /**
  * LocalStorage helpers
@@ -60,12 +59,18 @@ export function saveStoredActiveProfileId(id) {
   }
 }
 
+// Languages seeded by older versions (no profileId); dropped so the list starts empty
+const LEGACY_SEED_QIDS = { id: 'Q9240', en: 'Q1860', ms: 'Q9237', bew: 'Q33014', fr: 'Q150' };
+
 export function getStoredLanguages() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.LANGUAGES);
     if (!raw) return DEFAULT_LANGUAGES;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_LANGUAGES;
+    if (!Array.isArray(parsed)) return DEFAULT_LANGUAGES;
+    return parsed
+      .filter((l) => l.profileId || LEGACY_SEED_QIDS[l.id] !== l.qid)
+      .map((l) => (l.profileId ? l : { ...l, profileId: 'prof_default' }));
   } catch {
     return DEFAULT_LANGUAGES;
   }
@@ -81,9 +86,9 @@ export function saveStoredLanguages(languages) {
 
 export function getStoredActiveLanguageId() {
   try {
-    return localStorage.getItem(STORAGE_KEYS.ACTIVE_LANGUAGE_ID) || 'id';
+    return localStorage.getItem(STORAGE_KEYS.ACTIVE_LANGUAGE_ID) || '';
   } catch {
-    return 'id';
+    return '';
   }
 }
 

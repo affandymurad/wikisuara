@@ -193,6 +193,7 @@ export default function RecordStep() {
                     </span>
                     <span className="font-semibold text-[var(--ink)] truncate">
                       {w.text}
+                      {w.romanization && <span className="font-medium text-[var(--muted)]"> ({w.romanization})</span>}
                     </span>
                   </div>
 
@@ -260,6 +261,11 @@ export default function RecordStep() {
               >
                 {currentWord?.text}
               </div>
+              {currentWord?.romanization && (
+                <div className="mt-2 text-lg font-semibold text-[var(--muted)]">
+                  ({currentWord.romanization})
+                </div>
+              )}
 
               {/* Dynamic volume / duration feedback */}
               {isRecording ? (

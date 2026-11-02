@@ -85,10 +85,6 @@ export default function LanguagesStep() {
   };
 
   const handleDeleteLanguage = (id, name) => {
-    if (languages.length <= 1) {
-      showToast('Minimal harus ada satu bahasa tersimpan.', 'warn');
-      return;
-    }
     const success = deleteLanguage(id);
     if (success) {
       setConfirmDeleteId(null);
@@ -97,6 +93,8 @@ export default function LanguagesStep() {
   };
 
   const isQidValid = Boolean(activeLanguage?.qid?.trim() && activeLanguage?.code?.trim());
+  // With no saved language the add form is always open, so the step is never a blank page
+  const showAddForm = isAdding || languages.length === 0;
 
   return (
     <Card
@@ -104,11 +102,21 @@ export default function LanguagesStep() {
       title={t('langTitle')}
       lead={t('langLead')}
       stepNumber={2}
-      nextDisabled={!isQidValid || languages.length === 0}
+      nextDisabled={!isQidValid}
     >
       <div className="space-y-6">
         {/* Warning if QID/code missing */}
-        {!isQidValid && (
+        {languages.length === 0 && (
+          <div className="hint !my-0">
+            <svg className="w-4 h-4 flex-none mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 16v-4" />
+              <path d="M12 8h.01" />
+            </svg>
+            <div>{t('langEmptyState')}</div>
+          </div>
+        )}
+        {languages.length > 0 && !isQidValid && (
           <div className="alert-warning">
             <svg className="w-5 h-5 flex-none mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
@@ -125,7 +133,7 @@ export default function LanguagesStep() {
             <h3 className="text-sm font-bold text-[var(--ink)] uppercase tracking-wider">
               {t('langActiveSectionTitle')}
             </h3>
-            {!isAdding && (
+            {!showAddForm && (
               <button
                 type="button"
                 onClick={() => setIsAdding(true)}
@@ -161,7 +169,7 @@ export default function LanguagesStep() {
                     </div>
 
                     {/* Inline Delete Button (available if >1 language) */}
-                    {languages.length > 1 && (
+                    {(
                       <div onClick={(e) => e.stopPropagation()} className="relative z-10">
                         {isConfirming ? (
                           <div className="flex items-center gap-1 bg-[var(--surface)] p-1 rounded-lg border border-[var(--danger)] shadow-md text-[11px] animate-[pop_0.15s_ease-out]">
@@ -238,7 +246,7 @@ export default function LanguagesStep() {
                 </span>
               </div>
 
-              {languages.length > 1 && (
+              {(
                 <div>
                   {confirmDeleteId === activeLanguage.id ? (
                     <div className="flex items-center gap-1.5 text-xs">
@@ -330,7 +338,7 @@ export default function LanguagesStep() {
         )}
 
         {/* Section 3: Add Language Modal/Form with Wikidata lookup */}
-        {isAdding && (
+        {showAddForm && (
           <div className="rounded-2xl border-2 border-[var(--brand)] bg-[var(--surface)] p-5 shadow-lg space-y-4 animate-[rise_0.2s_ease-out]">
             <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
               <h3 className="font-extrabold text-base text-[var(--ink)]">{t('langAddBtn')}</h3>
@@ -348,6 +356,7 @@ export default function LanguagesStep() {
               <label className="block text-xs font-bold text-[var(--muted)] mb-1">
                 Cari Bahasa di Wikidata (Otomatis)
               </label>
+              <div className="text-[11px] text-[var(--muted)] mb-1.5">{t('langSearchHint')}</div>
               <form onSubmit={handleSearchWikidata} className="flex gap-2">
                 <input
                   type="search"

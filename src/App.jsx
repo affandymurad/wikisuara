@@ -86,7 +86,7 @@ export default function App() {
             © {new Date().getFullYear()} <strong className="text-[var(--ink)]">Wikisuara</strong> · {t('footerNote')}
           </div>
           <div className="flex items-center gap-4">
-            <span>Format: <code>WS-&#123;QID&#125; (&#123;kode&#125;)-&#123;penutur&#125;-&#123;kata&#125;.wav</code></span>
+            <span>Format: <code>WS-&#123;QID&#125; (&#123;kode&#125;)-&#123;kemahiran&#125;-&#123;penutur&#125;-&#123;kata&#125;.wav</code></span>
           </div>
         </div>
       </footer>

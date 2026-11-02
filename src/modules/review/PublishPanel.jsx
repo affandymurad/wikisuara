@@ -1,19 +1,31 @@
 import { useState } from 'react';
 import { useT } from '../../lib/i18n.js';
+import { withRomanization } from '../../lib/script.js';
+import { BABEL_LEVELS } from '../../lib/languages.js';
 import { useApp } from '../../state/AppContext.jsx';
 import { downloadBlob } from '../../lib/zip.js';
 import { downloadAllAsZip } from './publishService.js';
 
 export default function PublishPanel({ publishItems, onClose }) {
-  const { t } = useT();
-  const { showToast, deleteRecording } = useApp();
+  const { t, lang: uiLang } = useT();
+  const { showToast, deleteRecording, activeProfile, activeLanguage } = useApp();
 
   const [copiedIndex, setCopiedIndex] = useState(null);
-  const [allCopied, setAllCopied] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [zipProgress, setZipProgress] = useState(0);
-  const describe = (item) =>
-    t('pubDescription', { word: item.word, language: item.language, code: item.code, speaker: item.speaker.trim() });
+  const describe = (item) => {
+    const level = BABEL_LEVELS.find((b) => b.code === item.level) || BABEL_LEVELS[0];
+    return t('pubDescription', {
+      word: withRomanization(item.word, item.wordRoman),
+      language: item.language,
+      code: item.code,
+      speaker: withRomanization(item.speaker, item.speakerRoman),
+      level: level.code,
+      levelTitle: uiLang === 'id' ? level.titleId : level.titleEn,
+    });
+  };
+
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
 
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
   const [copiedDescIndex, setCopiedDescIndex] = useState(null);
@@ -41,13 +53,25 @@ export default function PublishPanel({ publishItems, onClose }) {
     });
   };
 
-  // Copy all filenames
-  const handleCopyAll = () => {
-    const text = publishItems.map((item) => item.filename).join('\n');
-    navigator.clipboard.writeText(text).then(() => {
-      setAllCopied(true);
-      setTimeout(() => setAllCopied(false), 2500);
-    });
+  // Download the file list as a PDF report
+  const handleDownloadPdf = async () => {
+    setIsPdfLoading(true);
+    try {
+      // Loaded on demand: the PDF library is large
+      const { downloadFileListPdf } = await import('../../lib/pdfExport.js');
+      await downloadFileListPdf({
+        items: publishItems.map((item) => ({ ...item, description: describe(item) })),
+        profile: activeProfile,
+        language: activeLanguage,
+        uiLang,
+        t,
+      });
+    } catch (err) {
+      console.error('PDF creation failed:', err);
+      showToast('Gagal membuat PDF: ' + err.message, 'error');
+    } finally {
+      setIsPdfLoading(false);
+    }
   };
 
   // Download single file
@@ -114,17 +138,20 @@ export default function PublishPanel({ publishItems, onClose }) {
             </span>
           </button>
 
-          {/* Copy all filenames */}
+          {/* Download PDF */}
           <button
             type="button"
-            onClick={handleCopyAll}
+            onClick={handleDownloadPdf}
+            disabled={isPdfLoading || publishItems.length === 0}
             className="icon-btn text-xs py-2 px-3.5"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="12" y1="18" x2="12" y2="12" />
+              <polyline points="9 15 12 18 15 15" />
             </svg>
-            <span>{allCopied ? t('pubNamesCopied') : t('pubCopyNamesBtn')}</span>
+            <span>{isPdfLoading ? t('pubPdfPreparing') : t('pubPdfBtn')}</span>
           </button>
         </div>
 
@@ -195,7 +222,7 @@ export default function PublishPanel({ publishItems, onClose }) {
                     </div>
                   </td>
                   <td className="font-semibold text-sm text-[var(--ink)]">
-                    {item.word}
+                    {withRomanization(item.word, item.wordRoman)}
                   </td>
                   <td className="text-xs text-[var(--ink)] min-w-[220px]">
                     <div className="flex items-start gap-2">

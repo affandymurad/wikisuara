@@ -1,18 +1,22 @@
 /**
  * File naming conventions for Wikisuara
  * Specification:
- *   WS-{QID bahasa} ({kode bahasa})-{nama penutur}-{kata}.wav
+ *   WS-{QID bahasa} ({kode bahasa})-{kemahiran}-{nama penutur}-{kata}.wav
  *
  * Rules:
  *   - "WS-" is fixed prefix (Wikisuara).
  *   - "{QID} ({code})" e.g. "Q33014 (bew)" with one space before parenthesis.
- *   - 3 parts separated by hyphen "-" with NO SPACES around it.
+ *   - "{kemahiran}" = Babel proficiency level of the speaker (N, 5, 4, 3, 2, 1, 0), e.g. "WS-Q33014 (bew)-2-Affandy Murad-babe.wav".
+ *   - Non-Latin speaker names / words get their Latin reading in parentheses, e.g. "Иван (Ivan)".
+ *   - 4 parts separated by hyphen "-" with NO SPACES around it.
  *   - "nama penutur" = speaker name as-is (spaces preserved, e.g. "Affandy Murad").
  *   - "kata" = item text as-is, with forbidden characters removed: / \ : * ? " < > | and control characters.
  *     Parentheses and non-Latin characters are preserved.
  *   - Max total filename length: 200 characters (truncate word part if needed).
  *   - Duplicate filenames receive " (2)", " (3)", etc. before ".wav".
  */
+
+import { withRomanization } from './script.js';
 
 // Regex for forbidden characters in filenames: / \ : * ? " < > | and control characters
 const FORBIDDEN_CHARS_REGEX = /[\/\\:\*\?"<>\|\x00-\x1F\x7F]/g;
@@ -33,22 +37,26 @@ export function sanitizeWord(word) {
  * @param {Object} options
  * @param {string} options.qid Language Wikidata QID (e.g. "Q33014")
  * @param {string} options.code Language code (e.g. "bew")
+ * @param {string} options.level Babel proficiency level (e.g. "2")
  * @param {string} options.speaker Speaker name (e.g. "Affandy Murad")
+ * @param {string} [options.speakerRoman] Latin reading when the speaker name is non-Latin
+ * @param {string} [options.wordRoman] Latin reading when the word is non-Latin
  * @param {string} options.word Word or phrase (e.g. "bayem")
  * @param {number} [options.duplicateIndex=1] 1 = no suffix, 2 = " (2)", etc.
  * @returns {string} Full filename with .wav extension
  */
-export function buildFileName({ qid, code, speaker, word, duplicateIndex = 1 }) {
+export function buildFileName({ qid, code, level, speaker, speakerRoman, word, wordRoman, duplicateIndex = 1 }) {
   const cleanQid = (qid || '').trim();
   const cleanCode = (code || '').trim();
-  const cleanSpeaker = (speaker || '').trim();
-  let cleanWord = sanitizeWord(word || '');
+  const cleanLevel = (level || '').trim();
+  const cleanSpeaker = sanitizeWord(withRomanization(speaker, speakerRoman));
+  let cleanWord = sanitizeWord(withRomanization(word, wordRoman));
 
   // Part 1: WS-{QID} ({code})
   const langPart = `WS-${cleanQid} (${cleanCode})`;
 
-  // Part 2: {nama penutur}
-  const speakerPart = cleanSpeaker;
+  // Part 2: {kemahiran}-{nama penutur}
+  const speakerPart = cleanLevel ? `${cleanLevel}-${cleanSpeaker}` : cleanSpeaker;
 
   // Suffix for duplicates: "" or " (2)"
   const suffix = duplicateIndex > 1 ? ` (${duplicateIndex})` : '';
@@ -69,7 +77,7 @@ export function buildFileName({ qid, code, speaker, word, duplicateIndex = 1 }) 
 
 /**
  * Deduplicate a list of items and assign unique filenames
- * @param {Array<{ id: string, word: string, qid: string, code: string, speaker: string }>} items
+ * @param {Array<{ id: string, word: string, wordRoman?: string, qid: string, code: string, level?: string, speaker: string, speakerRoman?: string }>} items
  * @returns {Map<string, string>} Map of item.id -> unique filename
  */
 export function generateUniqueFileNames(items) {
@@ -79,10 +87,7 @@ export function generateUniqueFileNames(items) {
   items.forEach((item) => {
     // Generate base filename with duplicateIndex = 1
     const base = buildFileName({
-      qid: item.qid,
-      code: item.code,
-      speaker: item.speaker,
-      word: item.word,
+      ...item,
       duplicateIndex: 1,
     });
 
@@ -94,10 +99,7 @@ export function generateUniqueFileNames(items) {
       result.set(item.id, base);
     } else {
       const uniqueName = buildFileName({
-        qid: item.qid,
-        code: item.code,
-        speaker: item.speaker,
-        word: item.word,
+        ...item,
         duplicateIndex: nextCount,
       });
       result.set(item.id, uniqueName);

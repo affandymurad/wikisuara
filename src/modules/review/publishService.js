@@ -18,9 +18,12 @@ export function preparePublishList(words, recordings, selectedIds, profile, lang
   const itemsToName = eligibleWords.map((w) => ({
     id: w.id,
     word: w.text,
+    wordRoman: w.romanization || '',
     qid: language?.qid || '',
     code: language?.code || '',
+    level: language?.level || 'N',
     speaker: profile?.name || '',
+    speakerRoman: profile?.romanization || '',
   }));
 
   const filenameMap = generateUniqueFileNames(itemsToName);
@@ -33,14 +36,17 @@ export function preparePublishList(words, recordings, selectedIds, profile, lang
       index: index + 1,
       id: w.id,
       word: w.text,
+      wordRoman: w.romanization || '',
       filename,
       blob: rec.blob,
       duration: rec.duration || 0,
       size: rec.size || rec.blob.size,
-      speaker: profile.name,
-      language: language.name,
-      qid: language.qid,
-      code: language.code,
+      speaker: (profile?.name || '').trim(),
+      speakerRoman: (profile?.romanization || '').trim(),
+      level: language?.level || 'N',
+      language: language?.name || '',
+      qid: language?.qid || '',
+      code: language?.code || '',
     };
   });
 }

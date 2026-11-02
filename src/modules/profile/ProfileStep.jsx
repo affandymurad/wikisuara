@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Card from '../../components/Card.jsx';
 import { useApp } from '../../state/AppContext.jsx';
 import { useT } from '../../lib/i18n.js';
+import { hasNonLatin, needsRomanization, withRomanization } from '../../lib/script.js';
 import './profile.css';
 
 export default function ProfileStep() {
@@ -18,6 +19,7 @@ export default function ProfileStep() {
   const { t } = useT();
 
   const [newProfileName, setNewProfileName] = useState('');
+  const [newProfileRoman, setNewProfileRoman] = useState('');
   const [isAdding, setIsAdding] = useState(false);
 
   const handleAddProfile = (e) => {
@@ -26,9 +28,14 @@ export default function ProfileStep() {
       showToast(t('profileNameRequired'), 'warn');
       return;
     }
-    const created = addProfile(newProfileName.trim());
+    if (needsRomanization(newProfileName, newProfileRoman)) {
+      showToast(t('profileRomanRequired'), 'warn');
+      return;
+    }
+    const created = addProfile(newProfileName.trim(), newProfileRoman.trim());
     if (created) {
       setNewProfileName('');
+      setNewProfileRoman('');
       setIsAdding(false);
       showToast('Profil baru ditambahkan', 'success');
     }
@@ -40,7 +47,7 @@ export default function ProfileStep() {
       title={t('profileTitle')}
       lead={t('profileLead')}
       stepNumber={1}
-      nextDisabled={!activeProfile?.name?.trim()}
+      nextDisabled={!activeProfile?.name?.trim() || needsRomanization(activeProfile.name, activeProfile.romanization)}
     >
       <div className="space-y-6">
         {/* Active Profile Editor */}
@@ -56,17 +63,31 @@ export default function ProfileStep() {
               id="activeSpeakerName"
               type="text"
               value={activeProfile?.name || ''}
-              onChange={(e) => updateProfile(activeProfile.id, e.target.value)}
+              onChange={(e) => updateProfile(activeProfile.id, { name: e.target.value })}
               placeholder={t('profilePlaceholder')}
               className="flex-1 font-semibold text-base"
               autoComplete="name"
             />
-            {activeProfile?.isDefault && (
-              <span className="self-center px-3 py-1.5 rounded-xl bg-[var(--soft)] text-[var(--brand-text)] border border-[var(--line)] text-xs font-bold whitespace-nowrap">
-                {t('profileDefaultBadge')}
-              </span>
-            )}
           </div>
+
+          {/* Romanization: only shown (and required) when the name has non-Latin letters */}
+          {hasNonLatin(activeProfile?.name) && (
+            <div className="mt-4 pt-4 border-t border-[var(--line)]">
+              <label htmlFor="activeSpeakerRoman" className="block text-sm font-bold text-[var(--ink)] mb-1.5">
+                {t('profileRomanLabel')}
+              </label>
+              <div className="text-xs text-[var(--muted)] mb-3">{t('profileRomanHint')}</div>
+              <input
+                id="activeSpeakerRoman"
+                type="text"
+                value={activeProfile?.romanization || ''}
+                onChange={(e) => updateProfile(activeProfile.id, { romanization: e.target.value })}
+                placeholder={t('profileRomanPlaceholder')}
+                className="w-full font-semibold text-base"
+                aria-required="true"
+              />
+            </div>
+          )}
         </div>
 
         {/* Profiles List / Switcher */}
@@ -95,6 +116,16 @@ export default function ProfileStep() {
                 className="flex-1 min-w-[200px] text-sm"
                 autoFocus
               />
+              {hasNonLatin(newProfileName) && (
+                <input
+                  type="text"
+                  value={newProfileRoman}
+                  onChange={(e) => setNewProfileRoman(e.target.value)}
+                  placeholder={`${t('profileRomanLabel')} — ${t('profileRomanPlaceholder')}`}
+                  className="basis-full text-sm"
+                  aria-required="true"
+                />
+              )}
               <button type="submit" className="btn-primary text-xs py-2 px-4">
                 Simpan
               </button>
@@ -103,6 +134,7 @@ export default function ProfileStep() {
                 onClick={() => {
                   setIsAdding(false);
                   setNewProfileName('');
+                  setNewProfileRoman('');
                 }}
                 className="icon-btn text-xs py-2 px-3"
               >
@@ -134,9 +166,9 @@ export default function ProfileStep() {
                       {p.name.trim().charAt(0).toUpperCase() || 'P'}
                     </div>
                     <div className="truncate">
-                      <div className="text-sm font-bold text-[var(--ink)] truncate">{p.name.trim() || 'Belum diisi'}</div>
+                      <div className="text-sm font-bold text-[var(--ink)] truncate">{withRomanization(p.name, p.romanization) || 'Belum diisi'}</div>
                       <div className="text-[11px] text-[var(--muted)]">
-                        {p.isDefault ? t('profileDefaultBadge') : isActive ? t('profileActiveBadge') : 'Penutur'}
+                        {isActive ? t('profileActiveBadge') : 'Penutur'}
                       </div>
                     </div>
                   </div>
@@ -147,7 +179,7 @@ export default function ProfileStep() {
                         ✓
                       </span>
                     ) : (
-                      !p.isDefault && (
+                      profiles.length > 1 && (
                         <button
                           type="button"
                           onClick={(e) => {

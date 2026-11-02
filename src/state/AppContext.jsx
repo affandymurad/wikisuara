@@ -19,8 +19,9 @@ import {
   clearAllLocalStorage,
   DEFAULT_PROFILES,
   DEFAULT_WORDS,
+  DEFAULT_LANGUAGES,
 } from './storage.js';
-import { DEFAULT_LANGUAGES } from '../lib/languages.js';
+import { needsRomanization } from '../lib/script.js';
 import { convertRawBlobToWav } from '../lib/wav.js';
 
 const AppContext = createContext(null);
@@ -34,7 +35,8 @@ export function AppProvider({ children }) {
   const [activeProfileId, setActiveProfileIdState] = useState(getStoredActiveProfileId);
 
   // Languages
-  const [languages, setLanguages] = useState(getStoredLanguages);
+  // Every language belongs to one speaker profile (language.profileId)
+  const [allLanguages, setLanguages] = useState(getStoredLanguages);
   const [activeLanguageId, setActiveLanguageIdState] = useState(getStoredActiveLanguageId);
 
   // Words list
@@ -93,8 +95,8 @@ export function AppProvider({ children }) {
   }, [profiles]);
 
   useEffect(() => {
-    saveStoredLanguages(languages);
-  }, [languages]);
+    saveStoredLanguages(allLanguages);
+  }, [allLanguages]);
 
   useEffect(() => {
     saveStoredWords(words);
@@ -110,12 +112,13 @@ export function AppProvider({ children }) {
     saveStoredActiveProfileId(id);
   }, []);
 
-  const addProfile = useCallback((name) => {
+  const addProfile = useCallback((name, romanization = '') => {
     const cleanName = (name || '').trim();
     if (!cleanName) return null;
     const newProf = {
       id: `prof_${Date.now()}`,
       name: cleanName,
+      romanization: (romanization || '').trim(),
       isDefault: false,
     };
     setProfiles((prev) => [...prev, newProf]);
@@ -123,21 +126,21 @@ export function AppProvider({ children }) {
     return newProf;
   }, [setActiveProfileId]);
 
-  const updateProfile = useCallback((id, name) => {
-    // Keep the raw value while typing so the field can be cleared and spaces can be entered;
-    // consumers (canGoNext, buildFileName) trim it.
+  // `patch` is { name?, romanization? }; raw values are kept while typing (consumers trim)
+  const updateProfile = useCallback((id, patch) => {
     setProfiles((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, name: name || '' } : p))
+      prev.map((p) => (p.id === id ? { ...p, ...patch } : p))
     );
   }, []);
 
   const deleteProfile = useCallback(
     (id) => {
       const target = profiles.find((p) => p.id === id);
-      if (!target || target.isDefault || profiles.length <= 1) {
+      if (!target || profiles.length <= 1) {
         return false;
       }
       setProfiles((prev) => prev.filter((p) => p.id !== id));
+      setLanguages((prev) => prev.filter((l) => l.profileId !== id));
       if (activeProfileId === id) {
         const remaining = profiles.filter((p) => p.id !== id);
         setActiveProfileId(remaining[0].id);
@@ -147,9 +150,14 @@ export function AppProvider({ children }) {
     [profiles, activeProfileId, setActiveProfileId]
   );
 
-  // Active language
+  // Languages of the active speaker profile only
+  const languages = useMemo(
+    () => allLanguages.filter((l) => l.profileId === activeProfile.id),
+    [allLanguages, activeProfile.id]
+  );
+
   const activeLanguage = useMemo(() => {
-    return languages.find((l) => l.id === activeLanguageId) || languages[0] || DEFAULT_LANGUAGES[0];
+    return languages.find((l) => l.id === activeLanguageId) || languages[0] || null;
   }, [languages, activeLanguageId]);
 
   const setActiveLanguageId = useCallback((id) => {
@@ -160,16 +168,17 @@ export function AppProvider({ children }) {
   const addLanguage = useCallback((lang) => {
     const newLang = {
       id: `lang_${Date.now()}`,
+      profileId: activeProfile.id,
       name: lang.name.trim(),
       nativeName: lang.nativeName?.trim() || lang.name.trim(),
       qid: lang.qid.trim().toUpperCase(),
       code: lang.code.trim().toLowerCase(),
-      level: lang.level || 'Native',
+      level: lang.level || 'N',
     };
     setLanguages((prev) => [...prev, newLang]);
     setActiveLanguageId(newLang.id);
     return newLang;
-  }, [setActiveLanguageId]);
+  }, [activeProfile.id, setActiveLanguageId]);
 
   const updateLanguage = useCallback((id, updates) => {
     setLanguages((prev) =>
@@ -179,56 +188,31 @@ export function AppProvider({ children }) {
 
   const deleteLanguage = useCallback(
     (id) => {
-      setLanguages((prev) => {
-        if (prev.length <= 1) return prev;
-        const remaining = prev.filter((l) => l.id !== id);
-        return remaining;
-      });
-      setActiveLanguageIdState((prevId) => {
-        if (prevId === id) {
-          const nextLang = languages.find((l) => l.id !== id) || DEFAULT_LANGUAGES[0];
-          saveStoredActiveLanguageId(nextLang.id);
-          return nextLang.id;
-        }
-        return prevId;
-      });
+      setLanguages((prev) => prev.filter((l) => l.id !== id));
+      if (activeLanguageId === id) {
+        setActiveLanguageId('');
+      }
       return true;
     },
-    [languages]
+    [activeLanguageId, setActiveLanguageId]
   );
 
-  // Words management: split by comma, newline, or multiple text inputs, ignore duplicates
-  const addWordsRaw = useCallback((rawText) => {
-    if (!rawText) return 0;
-    // Split by comma, newline, or hash
-    const items = rawText
-      .split(/[,\r\n#;]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-    if (items.length === 0) return 0;
-
-    let addedCount = 0;
-    setWords((prev) => {
-      const existingSet = new Set(prev.map((w) => w.text.toLowerCase()));
-      const nextList = [...prev];
-
-      items.forEach((itemText) => {
-        const lower = itemText.toLowerCase();
-        if (!existingSet.has(lower)) {
-          existingSet.add(lower);
-          nextList.push({
-            id: `w_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            text: itemText,
-          });
-          addedCount++;
-        }
-      });
-      return nextList;
-    });
-
-    return addedCount;
-  }, []);
+  // Words management: one entry at a time from the form; duplicates (same text) are ignored.
+  // Returns 'added' | 'duplicate' | 'empty'.
+  const addWord = useCallback((text, romanization = '') => {
+    const cleanText = (text || '').trim();
+    if (!cleanText) return 'empty';
+    if (words.some((w) => w.text.toLowerCase() === cleanText.toLowerCase())) return 'duplicate';
+    setWords((prev) => [
+      ...prev,
+      {
+        id: `w_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        text: cleanText,
+        romanization: (romanization || '').trim(),
+      },
+    ]);
+    return 'added';
+  }, [words]);
 
   const removeWord = useCallback((id) => {
     setWords((prev) => prev.filter((w) => w.id !== id));
@@ -313,7 +297,7 @@ export function AppProvider({ children }) {
     setProfiles(DEFAULT_PROFILES);
     setActiveProfileIdState(DEFAULT_PROFILES[0].id);
     setLanguages(DEFAULT_LANGUAGES);
-    setActiveLanguageIdState(DEFAULT_LANGUAGES[0].id);
+    setActiveLanguageIdState('');
     setWords(DEFAULT_WORDS);
     setRecordings({});
     setStepState(1);
@@ -325,14 +309,13 @@ export function AppProvider({ children }) {
   const canGoNext = useCallback(
     (stepNum) => {
       switch (stepNum) {
-        case 1: // Profil: Speaker name required
-          return Boolean(activeProfile?.name?.trim());
-        case 2: // Bahasa: At least 1 language, and activeLanguage must have QID & code
-          return Boolean(
-            activeLanguage?.qid?.trim() &&
-            activeLanguage?.code?.trim() &&
-            languages.length > 0
+        case 1: // Profil: Speaker name required (+ romanization when non-Latin)
+          return (
+            Boolean(activeProfile?.name?.trim()) &&
+            !needsRomanization(activeProfile.name, activeProfile.romanization)
           );
+        case 2: // Bahasa: an active language with QID & code
+          return Boolean(activeLanguage?.qid?.trim() && activeLanguage?.code?.trim());
         case 3: // Cek Perangkat: Can proceed if tested or permission checked
           return true;
         case 4: // Daftar Kata: Must have at least 1 word
@@ -345,8 +328,20 @@ export function AppProvider({ children }) {
           return true;
       }
     },
-    [activeProfile, activeLanguage, languages, words, recordings]
+    [activeProfile, activeLanguage, words, recordings]
   );
+
+  // A saved step may no longer be reachable (e.g. data was cleared): fall back to the first blocked step
+  useEffect(() => {
+    if (!isRecordingsLoaded) return; // step 5 depends on recordings loaded from IndexedDB
+    for (let n = 1; n < step; n++) {
+      if (!canGoNext(n)) {
+        setStepState(n);
+        saveStoredStep(n);
+        return;
+      }
+    }
+  }, [step, canGoNext, isRecordingsLoaded]);
 
   const value = {
     step,
@@ -370,7 +365,7 @@ export function AppProvider({ children }) {
     deleteLanguage,
     // Words
     words,
-    addWordsRaw,
+    addWord,
     removeWord,
     clearWords,
     // Audio Recordings
